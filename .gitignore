@@ -41,3 +41,8 @@ target_wrapper.*
 
 # QtCreator CMake
 CMakeLists.txt.user*
+
+# Custom
+win32
+linux
+mac
