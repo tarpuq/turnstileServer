@@ -2,16 +2,16 @@
 
 #include <QDebug>
 
-enum _MessageType
-{
-    MSG_ENTRY_REQUIRED = 0,
+typedef enum _MessageType {
+    MSG_TIMESTAMP = 0,
+    MSG_ENTRY_REQUIRED,
     MSG_ENTRY_RESULT,
     MSG_EXIT_REQUIRED,
     MSG_EXIT_RESULT
-};
+} messageType_t;
 
-#define TEST_TALONERA   0x01
-#define TEST_MANILLA    0x02
+#define TEST_TALONERA 0x01
+#define TEST_MANILLA 0x02
 
 App::App(QObject *parent)
     : QObject(parent)
@@ -44,45 +44,20 @@ void App::SetPort(quint16 port)
     //repor->GuardarX();
 }
 
-void App::ProcessFrame(QTcpSocket *socket, QByteArray leido)
+bool App::getCardState(quint32 cardNumber)
 {
-    QByteArray answer;
-    QString filters;
-    uint8_t direction = 0;
-    uint8_t deviceID = 0;
-    uint8_t testOk = 0;
-    uint8_t esd_reporte_tipo = 0;
-    uint8_t messageType = 0;
-    uint32_t cardNumber = 0;
-    int cardStatus = 0;
-
-    QString testsRequiredString = "";
-    uint8_t testsRequired = 0;
-    int planta_accesos_id = 0;
-    int testsTimeout = 0;
-
     QSqlDatabase db = QSqlDatabase::database("dbConexion");
     QSqlQuery query(db);
 
-    direction = static_cast<uint8_t>(leido.at(0)) & 0x80;
-    deviceID = static_cast<uint8_t>(leido.at(0)) & 0x7F;
+    QString queryStr;
 
-    messageType = static_cast<uint8_t>(leido.at(1)) & 0x000000FF;
+    bool isValidCard = false;
+    queryStr = QString("SELECT estado FROM bd_plantapruebas.tarjetas_acceso WHERE codigo = %1")
+                   .arg(cardNumber);
 
-    cardNumber = static_cast<uint32_t>(leido.at(2)) & 0x000000FF;
-    cardNumber |= (static_cast<uint32_t>(leido.at(3)) << 8) & 0x0000FF00;
-    cardNumber |= (static_cast<uint32_t>(leido.at(4)) << 16) & 0x00FF0000;
-
-    QString frame
-        = QString("Dev:%1, Msg:%2, CardNumber:%3").arg(deviceID).arg(messageType).arg(cardNumber);
-    qDebug() << frame;
-
-    filters = QString("SELECT estado FROM bd_plantapruebas.tarjetas_acceso WHERE codigo = %1")
-                  .arg(cardNumber);
-
-    if (query.exec(filters)) {
+    if (query.exec(queryStr)) {
         if (query.next()) {
-            cardStatus = query.value("estado").toInt();
+            isValidCard = query.value("estado").toInt();
         }
     } else {
         //  Process error
@@ -94,9 +69,9 @@ void App::ProcessFrame(QTcpSocket *socket, QByteArray leido)
             db.open();
         }
         if (db.isOpen()) {
-            if (query.exec(filters)) {
+            if (query.exec(queryStr)) {
                 if (query.next()) {
-                    cardStatus = query.value("estado").toInt();
+                    isValidCard = query.value("estado").toInt();
                 }
             } else {
                 //  Process error
@@ -104,109 +79,205 @@ void App::ProcessFrame(QTcpSocket *socket, QByteArray leido)
             }
         }
     }
+    return isValidCard;
+}
+
+void App::getCardData(quint32 cardNumber, plantaAccesos_t *info)
+{
+    QSqlDatabase db = QSqlDatabase::database("dbConexion");
+    QSqlQuery query(db);
+
+    QString queryStr;
+
+    QString testsRequiredString = "";
+    bool dataOk = false;
+
+    queryStr = QString("SELECT id, pruebas_requeridas, tiempo_duracion FROM "
+                       "bd_plantapruebas.planta_accesos WHERE tarjetas_acceso_codigo = %1")
+                   .arg(cardNumber);
+
+    if (query.exec(queryStr)) {
+        if (query.next()) {
+            dataOk = true;
+        }
+    } else {
+        //  Process error
+        qDebug() << "DB Error, get time";
+        if (!db.isOpen()) {
+            db.open();
+        } else {
+            db.close();
+            db.open();
+        }
+        if (db.isOpen()) {
+            if (query.exec(queryStr)) {
+                if (query.next()) {
+                    dataOk = true;
+                }
+            } else {
+                //  Process error
+                qDebug() << "DB Error, get time";
+            }
+        }
+    }
+
+    if (dataOk) {
+        info->id = query.value("id").toInt();
+        info->testsRequired = 0;
+        testsRequiredString = query.value("pruebas_requeridas").toString();
+        info->testTimeout = static_cast<qint8>(query.value("tiempo_duracion").toInt());
+
+        if (testsRequiredString.contains("TALONERA")) {
+            info->testsRequired |= TEST_TALONERA;
+        }
+
+        if (testsRequiredString.contains("MANILLA")) {
+            info->testsRequired |= TEST_MANILLA;
+        }
+    }
+}
+
+void App::ProcessFrame(QTcpSocket *socket, QByteArray leido)
+{
+    QByteArray answer;
+    QString filters;
+    uint8_t direction = 0;
+    uint8_t deviceID = 0;
+    uint8_t testOk = 0;
+    uint8_t esd_reporte_tipo = 0;
+    messageType_t messageType;
+    uint32_t cardNumber = 0;
+    int validCard = 0;
+
+    QString testsRequiredString = "";
+
+    plantaAccesos_t workerInfo;
+
+    QSqlDatabase db = QSqlDatabase::database("dbConexion");
+    QSqlQuery query(db);
+
+    direction = static_cast<uint8_t>(leido.at(0)) & 0x80;
+    deviceID = static_cast<uint8_t>(leido.at(0)) & 0x7F;
+
+    messageType = static_cast<messageType_t>(leido.at(1)) ;
 
     answer.clear();
     answer.append(static_cast<char>(direction | deviceID));
     answer.append(static_cast<char>(messageType));
-    answer.append(static_cast<char>(cardStatus));
 
-    if (cardStatus == 1) {
-        filters = QString("SELECT id, pruebas_requeridas, tiempo_duracion FROM "
-                          "bd_plantapruebas.planta_accesos WHERE tarjetas_acceso_codigo = %1")
-                      .arg(cardNumber);
+    QString frame = QString("Dev:%1, Msg:%2").arg(deviceID).arg(messageType);
+    qDebug() << frame;
+
+    QDateTime timeStamp = QDateTime::currentDateTime();
+
+    switch (messageType) {
+    case MSG_TIMESTAMP:
+        answer.append(static_cast<char>(timeStamp.date().day()));
+        answer.append(static_cast<char>(timeStamp.date().month()));
+        answer.append(static_cast<char>(timeStamp.date().year() - 2000));
+        answer.append(static_cast<char>(timeStamp.time().hour()));
+        answer.append(static_cast<char>(timeStamp.time().minute()));
+        answer.append(static_cast<char>(timeStamp.time().second()));
+        break;
+    case MSG_ENTRY_REQUIRED:
+        cardNumber = static_cast<uint32_t>(leido.at(2)) & 0x000000FF;
+        cardNumber |= (static_cast<uint32_t>(leido.at(3)) << 8) & 0x0000FF00;
+        cardNumber |= (static_cast<uint32_t>(leido.at(4)) << 16) & 0x00FF0000;
+
+        validCard = getCardState(cardNumber);
+
+        answer.append(static_cast<char>(validCard));
+
+        getCardData(cardNumber, &workerInfo);
+
+        if (validCard == 1) {
+            answer.append(static_cast<char>(workerInfo.testsRequired));
+            answer.append(static_cast<char>(workerInfo.testTimeout));
+        } else {
+            //  An invalid card is being used
+            qDebug() << "Invalid ID card";
+        }
+        break;
+    case MSG_ENTRY_RESULT:
+        cardNumber = static_cast<uint32_t>(leido.at(2)) & 0x000000FF;
+        cardNumber |= (static_cast<uint32_t>(leido.at(3)) << 8) & 0x0000FF00;
+        cardNumber |= (static_cast<uint32_t>(leido.at(4)) << 16) & 0x00FF0000;
+
+        validCard = getCardState(cardNumber);
+
+        answer.append(static_cast<char>(validCard));
+
+        getCardData(cardNumber, &workerInfo);
+
+        testOk = static_cast<uint32_t>(leido.at(5)) & 0x000000FF;
+        esd_reporte_tipo = direction >> 7;
+        filters = QString("INSERT INTO bd_plantapruebas.esd_reporte (resultado, tipo, "
+                          "planta_accesos_id)"
+                          "VALUES (%1,%2,%3)")
+                      .arg(testOk)
+                      .arg(esd_reporte_tipo)
+                      .arg(workerInfo.id);
+
+        qDebug() << filters;
 
         if (query.exec(filters)) {
-            if (query.next()) {
-                planta_accesos_id = query.value("id").toInt();
-                testsRequiredString = query.value("pruebas_requeridas").toString();
-                testsTimeout = query.value("tiempo_duracion").toInt();
-            }
+            //  Process ok
+            qDebug() << "DB OK";
         } else {
             //  Process error
-            qDebug() << "DB Error, get time";
-            if (!db.isOpen()) {
-                db.open();
-            } else {
-                db.close();
-                db.open();
-            }
-            if (db.isOpen()) {
-                if (query.exec(filters)) {
-                    if (query.next()) {
-                        planta_accesos_id = query.value("id").toInt();
-                        testsRequiredString = query.value("pruebas_requeridas").toString();
-                        testsTimeout = query.value("tiempo_duracion").toInt();
-                    }
-                } else {
-                    //  Process error
-                    qDebug() << "DB Error, get time";
-                }
-            }
+            qDebug() << "DB ERROR";
         }
 
-        switch (messageType) {
-        case MSG_ENTRY_REQUIRED:
-            if (testsRequiredString.contains("TALONERA")) {
-                testsRequired |= TEST_TALONERA;
-            }
+        break;
+    case MSG_EXIT_REQUIRED:
+        cardNumber = static_cast<uint32_t>(leido.at(2)) & 0x000000FF;
+        cardNumber |= (static_cast<uint32_t>(leido.at(3)) << 8) & 0x0000FF00;
+        cardNumber |= (static_cast<uint32_t>(leido.at(4)) << 16) & 0x00FF0000;
 
-            if (testsRequiredString.contains("MANILLA")) {
-                testsRequired |= TEST_MANILLA;
-            }
+        validCard = getCardState(cardNumber);
 
-            answer.append(static_cast<char>(testsRequired));
-            answer.append(static_cast<char>(testsTimeout));
-            break;
-        case MSG_ENTRY_RESULT:
-            testOk = static_cast<uint32_t>(leido.at(5)) & 0x000000FF;
-            esd_reporte_tipo = direction >> 7;
+        answer.append(static_cast<char>(validCard));
 
-            filters = QString("INSERT INTO bd_plantapruebas.esd_reporte (resultado, tipo, "
-                              "planta_accesos_id)"
-                              "VALUES (%1,%2,%3)")
-                          .arg(testOk)
-                          .arg(esd_reporte_tipo)
-                          .arg(planta_accesos_id);
+        getCardData(cardNumber, &workerInfo);
 
-            qDebug() << filters;
-
-            if (query.exec(filters)) {
-                //  Process ok
-                qDebug() << "DB OK";
-            } else {
-                //  Process error
-                qDebug() << "DB ERROR";
-            }
-
-            break;
-        case MSG_EXIT_REQUIRED:
-            break;
-        case MSG_EXIT_RESULT:
-            testOk = static_cast<uint32_t>(leido.at(5)) & 0x000000FF;
-            esd_reporte_tipo = direction >> 7;
-
-            filters = QString("INSERT INTO bd_plantapruebas.esd_reporte (resultado, tipo, "
-                              "planta_accesos_id)"
-                              "VALUES (%1,%2,%3)")
-                          .arg(testOk)
-                          .arg(esd_reporte_tipo)
-                          .arg(planta_accesos_id);
-
-            qDebug() << filters;
-
-            if (query.exec(filters)) {
-                //  Process ok
-                qDebug() << "DB OK";
-            } else {
-                //  Process error
-                qDebug() << "DB ERROR";
-            }
-            break;
+        if (validCard == 1) {
+            //  A valid card is being used
+        } else {
+            //  An invalid card is being used
+            qDebug() << "Invalid ID card";
         }
+        break;
+    case MSG_EXIT_RESULT:
+        cardNumber = static_cast<uint32_t>(leido.at(2)) & 0x000000FF;
+        cardNumber |= (static_cast<uint32_t>(leido.at(3)) << 8) & 0x0000FF00;
+        cardNumber |= (static_cast<uint32_t>(leido.at(4)) << 16) & 0x00FF0000;
 
-    } else {
-        //  An invalid card is being used
-        qDebug() << "Invalid ID card";
+        validCard = getCardState(cardNumber);
+
+        answer.append(static_cast<char>(validCard));
+
+        getCardData(cardNumber, &workerInfo);
+
+        testOk = static_cast<uint32_t>(leido.at(5)) & 0x000000FF;
+        esd_reporte_tipo = direction >> 7;
+
+        filters = QString("INSERT INTO bd_plantapruebas.esd_reporte (resultado, tipo, "
+                          "planta_accesos_id)"
+                          "VALUES (%1,%2,%3)")
+                      .arg(testOk)
+                      .arg(esd_reporte_tipo)
+                      .arg(workerInfo.id);
+
+        qDebug() << filters;
+
+        if (query.exec(filters)) {
+            //  Process ok
+            qDebug() << "DB OK";
+        } else {
+            //  Process error
+            qDebug() << "DB ERROR";
+        }
+        break;
     }
 
     tcp->writeData(socket, answer);

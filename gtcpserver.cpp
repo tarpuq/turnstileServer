@@ -54,8 +54,8 @@ void GTcpServer::newConnection()
 {
     QTcpSocket *socket = this->nextPendingConnection();
 	QString res = QString("Client connected on: %1 : %2").arg(socket->peerAddress().toString()).arg(socket->peerPort());
-	qInfo() << res;
-	connect(socket,SIGNAL(disconnected()),this,SLOT(disconnected()));
+    qInfo() << res;
+    connect(socket,SIGNAL(disconnected()),this,SLOT(disconnected()));
 	connect(socket,SIGNAL(readyRead()),this,SLOT(readyRead()));
 
     connect(socket,&QTcpSocket::stateChanged,this,&GTcpServer::stateChanged);
@@ -82,7 +82,7 @@ void GTcpServer::readyRead()
 
 	//  Read packet here
 	QByteArray data = socket->readAll();
-    res = QString("Rx from %1 - %2").arg(socket->peerAddress().toString()).arg(QString::fromLatin1(data.toHex('-')));
+    res = QString("UpLink %1 - %2").arg(socket->peerAddress().toString()).arg(QString::fromLatin1(data.toHex('-')));
 	qInfo() << res;
 
 	//  Process the packet here
@@ -91,17 +91,17 @@ void GTcpServer::readyRead()
 
 void GTcpServer::stateChanged(QAbstractSocket::SocketState socketState)
 {
-	qInfo() << "State Changed" << socketState;
+    //qInfo() << "State Changed" << socketState;
 }
 
 void GTcpServer::errorReceived(QAbstractSocket::SocketError socketError)
 {
-    qInfo() << "Error" << socketError;
+    //qInfo() << "Error" << socketError;
 }
 
 void GTcpServer::writeData(QTcpSocket *socket, QByteArray data)
 {
-    QString res = QString("Tx to %1 - %2").arg(socket->peerAddress().toString()).arg(QString::fromLatin1(data.toHex('-')));
+    QString res = QString("DownLink %1 - %2").arg(socket->peerAddress().toString()).arg(QString::fromLatin1(data.toHex('-')));
     qInfo() << res;
 
     socket->write(data);

@@ -9,11 +9,22 @@
 class App : public QObject
 {
     Q_OBJECT
+
 public:
     explicit App(QObject *parent = nullptr);
+
+    typedef struct _PlantaAccesos {
+        qint32 id;
+        qint8 testsRequired;
+        qint8 testTimeout;
+    } plantaAccesos_t;
+
     void SetDataBase(QString tipo, QString host, QString dataBase,
                      QString user, QString pswd);
     void SetPort(quint16 port);
+
+    bool getCardState(quint32 cardNumber);
+    void getCardData(quint32 cardNumber, plantaAccesos_t *info);
 
 private slots:
     void ProcesaEstadoBD(bool stt);
