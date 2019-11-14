@@ -16,7 +16,8 @@ public:
     typedef struct _PlantaAccesos {
         qint32 id;
         qint8 testsRequired;
-        qint8 testTimeout;
+        qint8 esdTimeout;
+        qint8 passTimeout;
     } plantaAccesos_t;
 
     void SetDataBase(QString tipo, QString host, QString dataBase,
@@ -24,7 +25,8 @@ public:
     void SetPort(quint16 port);
 
     bool getCardState(quint32 cardNumber);
-    void getCardData(quint32 cardNumber, plantaAccesos_t *info);
+    bool getAccessState(quint32 cardNumber);
+    void getProfileData(quint32 cardNumber, plantaAccesos_t *info);
 
 private slots:
     void ProcesaEstadoBD(bool stt);
